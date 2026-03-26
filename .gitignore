@@ -1,0 +1,43 @@
+# ── Python ────────────────────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# ── Virtual environments ──────────────────────────────────────────────────────
+venv/
+env/
+.venv/
+.env
+
+# ── Trained models (retrain on target: python run.py --mode train) ────────────
+data/cache/models/*.pkl
+data/cache/models/*.pt
+data/cache/models/*.json
+data/cache/models/*.lgbm
+!data/cache/models/.gitkeep
+
+# ── Raw / processed data (regenerate: tools/generate_synthetic_data.py) ───────
+data/raw/*.csv
+data/raw/*.xlsx
+data/raw/*.parquet
+!data/raw/.gitkeep
+
+data/processed/*
+!data/processed/.gitkeep
+
+# ── Runtime logs ──────────────────────────────────────────────────────────────
+logs/*.log
+data/logs/
+!logs/.gitkeep
+
+# ── IDE ───────────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.suo
+*.user
+
+# ── OS ────────────────────────────────────────────────────────────────────────
+.DS_Store
+Thumbs.db

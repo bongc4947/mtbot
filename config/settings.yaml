@@ -1,0 +1,81 @@
+# MT5_Bot_mk2 Configuration
+
+zmq:
+  ea_push_port: 5557    # EA binds → Python PULL connects (EA → Python data)
+  py_push_port: 5558    # Python PUSH binds → EA PULL connects (Python → EA cmds)
+  ea_host: "127.0.0.1"
+  heartbeat_interval: 5 # seconds
+  timeout_ms: 3000
+
+data:
+  # MT5 EA writes CSVs here via FILE_COMMON flag — must match EA export path
+  raw_dir: "%APPDATA%/MetaQuotes/Terminal/Common/Files/MT5_Bot_mk2/data/raw"
+  processed_dir: "data/processed"
+  cache_dir: "data/cache"
+  history_years: 5
+  primary_timeframe: "M1"
+  min_bars_required: 10000
+
+model:
+  primary: "ensemble"       # Changed from nhits to ensemble
+  fallback: "mlp"
+  input_window: 60          # bars lookback
+  forecast_horizon: 1
+  retrain_interval_hours: 4
+  min_train_samples: 5000
+  model_dir: "data/cache/models"
+
+ensemble:
+  nhits_weight: 0.30
+  lgbm_weight:  0.40
+  mlp_weight:   0.30
+  calibrate: false           # Platt scaling (adds training time)
+
+inference:
+  batch_size: 30            # process all symbols in one batch
+  latency_target_ms: 100
+  confidence_threshold: 0.62       # Trade entry threshold
+  stack_confidence_threshold: 0.70 # Stack entry threshold
+
+trading:
+  base_lot: 0.01
+  max_lot: 1.0
+  max_trades_per_symbol: 5
+  max_total_trades: 50
+  max_daily_drawdown_pct: 5.0
+  max_symbol_exposure_pct: 3.0
+  spread_multiplier: 2.5    # threshold = mean + N*std
+  micro_scalp_profit_pips: 2 # Reduced from 3 for higher frequency
+  micro_scalp_enabled: true
+  trade_stacking_enabled: true
+  label_sl_pips: 10          # SL distance for outcome labeling
+  label_tp_pips: 20          # TP distance for outcome labeling
+  label_horizon: 20          # Max bars to wait for TP/SL hit
+  min_trades_per_10min: 15   # Target trade frequency
+
+risk:
+  daily_loss_limit_pct: 5.0
+  per_trade_risk_pct: 1.0
+  max_drawdown_shutdown_pct: 10.0
+  cooldown_after_loss_seconds: 60
+
+gpu:
+  enabled: true             # auto-detect
+  prefer_directml: true
+  benchmark_on_startup: true
+  fallback_to_cpu: true
+
+logging:
+  level: "INFO"
+  file: "logs/mt5_bot_mk2.log"
+  max_bytes: 10485760       # 10MB
+  backup_count: 5
+
+startup:
+  preflight_auto_start_secs: 60   # Seconds to wait at pre-flight gate before auto-starting
+
+performance:
+  tick_buffer_size: 1000
+  spread_window: 100        # bars for spread stats
+  volatility_window: 20
+  circular_buffer_size: 2000

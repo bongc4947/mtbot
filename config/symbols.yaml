@@ -1,0 +1,85 @@
+# Target symbols — AvaTrade broker (MT5)
+# Symbol names verified against: Market Watch 20260325 132856.csv (864 live symbols).
+# The symbol resolver (ingestion/symbol_resolver.py) fuzzy-matches these canonical names
+# to the broker's live Market Watch list, so minor suffix variants are handled automatically.
+#
+# Spreads in ea_pips = (ask-bid) * 10^(digits-1)  ← EA formula, verified live.
+# pip_mult = (ask-bid) / ea_pips  ← computed dynamically in trade_stacker at runtime.
+
+symbols:
+  forex_majors:
+    - EURUSD     # bid=1.15854  ea_pips=0.8   pip_mult=0.0001
+    - GBPUSD     # bid=1.33881  ea_pips=1.2   pip_mult=0.0001
+    - USDJPY     # bid=159.033  ea_pips=1.3   pip_mult=0.01
+    - USDCHF     # bid=0.79059  ea_pips=1.3   pip_mult=0.0001
+    - AUDUSD     # bid=0.69614  ea_pips=0.9   pip_mult=0.0001
+    - USDCAD     # bid=1.37815  ea_pips=1.8   pip_mult=0.0001
+    - NZDUSD     # bid=0.58160  ea_pips=2.1   pip_mult=0.0001
+
+  forex_minors:
+    - EURGBP     # ea_pips=1.2
+    - EURJPY     # ea_pips=1.8   pip_mult=0.01
+    - EURCHF     # ea_pips=1.6
+    - EURCAD     # ea_pips=2.3
+    - EURAUD     # ea_pips=2.5
+    - EURNZD     # ea_pips=3.3
+    - GBPJPY     # ea_pips=2.2   pip_mult=0.01
+    - GBPCHF     # ea_pips=2.2
+    - GBPCAD     # ea_pips=3.3
+    - GBPAUD     # ea_pips=3.2
+    - GBPNZD     # ea_pips=4.9
+    - AUDJPY     # ea_pips=1.9   pip_mult=0.01
+    - AUDCAD     # ea_pips=2.4
+    - AUDCHF     # ea_pips=3.2
+    - AUDNZD     # ea_pips=2.4
+    - CADJPY     # ea_pips=2.3   pip_mult=0.01
+    - CADCHF     # ea_pips=1.8
+    - CHFJPY     # ea_pips=2.5   pip_mult=0.01
+    - NZDJPY     # ea_pips=2.5   pip_mult=0.01
+    - NZDCAD     # ea_pips=2.4
+    - NZDCHF     # ea_pips=1.9
+
+  metals:
+    - GOLD       # bid=4567.62  ea_pips=4.5   pip_mult=0.10  (broker name, not XAUUSD)
+    - SILVER     # bid=72.884   ea_pips=6.5   pip_mult=0.01  (broker name, not XAGUSD)
+    - COPPER     # bid=5.5225   ea_pips=7.5   pip_mult=0.001
+
+  energies:
+    - CrudeOIL   # bid=87.74    ea_pips=0.4   pip_mult=0.10
+    - BRENT_OIL  # bid=99.10    ea_pips=0.5   pip_mult=0.10
+    - NATURAL_GAS # bid=2.865   ea_pips=0.7   pip_mult=0.001
+
+  indices:
+    - US_500     # bid=6660.25   ea_pips=5.0   pip_mult=0.10
+    - US_TECH100 # bid=24432.25  ea_pips=25.0  pip_mult=0.10
+    - US_30      # bid=46859.0   ea_pips=0.6   pip_mult=10.0
+    - NAS100     # bid=12625.50  ea_pips=30.0  pip_mult=0.10
+    - UK_100     # bid=10095.5   ea_pips=1.5   pip_mult=0.10
+    - GERMANY_40 # bid=23207.5   ea_pips=2.0   pip_mult=0.10
+    - FRANCE_40  # bid=7859.0    ea_pips=2.0   pip_mult=0.10
+    - JAPAN_225  # bid=53575.0   ea_pips=3.5   pip_mult=10.0
+    - AUS_200    # bid=8609.0    ea_pips=0.4   pip_mult=0.10
+    - HK_50      # bid=25262.0   ea_pips=1.2   pip_mult=0.10
+
+  crypto:
+    - BTCUSD     # bid=71596.32  ea_pips=286.6  pip_mult=0.10
+    - ETHUSD     # bid=2181.50   ea_pips=11.0   pip_mult=0.10
+    - LTCUSD     # bid=56.39     ea_pips=1.8    pip_mult=0.10
+    - SOLUSD     # bid=92.81     ea_pips=2.8    pip_mult=0.10
+    - XRPUSD     # bid=1.4213    ea_pips=2.6    pip_mult=0.0001
+
+# Priority order for model training (highest liquidity first)
+training_priority:
+  - EURUSD
+  - GBPUSD
+  - USDJPY
+  - GOLD
+  - AUDUSD
+  - USDCAD
+  - GBPJPY
+  - EURJPY
+  - NZDUSD
+  - USDCHF
+
+# Skip live trading on a symbol if its spread exceeds this threshold (ea_pips)
+spread_skip_threshold_pips: 15.0
