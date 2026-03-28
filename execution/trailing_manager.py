@@ -89,8 +89,8 @@ class TrailingManager:
             state.peak_profit = profit_pips
 
         # AI trailing SL: tighten as profit grows
-        new_sl = self._compute_trailing_sl(state, current_price, buf)
-        new_tp = self._compute_trailing_tp(state, current_price, buf)
+        new_sl = self._compute_trailing_sl(state, current_price, buf, bid, ask)
+        new_tp = self._compute_trailing_tp(state, current_price, buf, bid, ask)
 
         min_move = pip_mult * 0.5  # half a pip — avoids spam, works for all symbol types
         sl_moved = abs(new_sl - state.sl) > min_move
@@ -113,7 +113,7 @@ class TrailingManager:
             )
 
     def _compute_trailing_sl(self, state: TradeState, current_price: float,
-                              buf) -> float:
+                              buf, bid: float, ask: float) -> float:
         from interface.state_manager import get_state_manager
         raw = buf.get_last(20)
         if len(raw) < 5:
@@ -141,17 +141,17 @@ class TrailingManager:
             profit_ratio = min(1.0, state.peak_profit / max(base_offset * 3, 1.0))
             tight_factor = 1.0 - profit_ratio * 0.4   # tighten up to 40%
 
-        sl_offset = base_offset * tight_factor * pip_mult
+        sl_offset = (base_offset * tight_factor + ea_pips) * pip_mult
 
         if state.direction == 1:  # BUY
-            new_sl = current_price - sl_offset
+            new_sl = bid - sl_offset
             return max(new_sl, state.sl)  # only move up
         else:  # SELL
-            new_sl = current_price + sl_offset
+            new_sl = ask + sl_offset
             return min(new_sl, state.sl)  # only move down
 
     def _compute_trailing_tp(self, state: TradeState, current_price: float,
-                              buf) -> float:
+                              buf, bid: float, ask: float) -> float:
         from interface.state_manager import get_state_manager
         raw = buf.get_last(20)
         if len(raw) < 5:
@@ -177,9 +177,9 @@ class TrailingManager:
         tp_offset = base_tp * expand_factor * pip_mult
 
         if state.direction == 1:
-            return current_price + tp_offset
+            return ask + tp_offset
         else:
-            return current_price - tp_offset
+            return bid - tp_offset
 
     def should_early_exit(self, ticket: int, current_signal_action: int,
                           current_confidence: float) -> bool:

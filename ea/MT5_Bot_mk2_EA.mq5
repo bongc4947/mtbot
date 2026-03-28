@@ -289,13 +289,26 @@ void ExecTrade(string json)
 
    g_trade.SetExpertMagicNumber(magic);
    MqlTick tick;
-   SymbolInfoTick(symbol, tick);
+   if(!SymbolInfoTick(symbol, tick)) { Print("No tick for ", symbol); return; }
+
+   int    digits   = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double point    = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int    stops_lv = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double min_dist = MathMax(stops_lv + 5, 20) * point;
 
    bool ok = false;
    if(action == "BUY")
+   {
+      if(sl >= tick.bid - min_dist) sl = NormalizeDouble(tick.bid - min_dist, digits);
+      if(tp <= tick.ask + min_dist) tp = NormalizeDouble(tick.ask + min_dist, digits);
       ok = g_trade.Buy(lot, symbol, tick.ask, sl, tp, comment);
+   }
    else if(action == "SELL")
+   {
+      if(sl <= tick.ask + min_dist) sl = NormalizeDouble(tick.ask + min_dist, digits);
+      if(tp >= tick.bid - min_dist) tp = NormalizeDouble(tick.bid - min_dist, digits);
       ok = g_trade.Sell(lot, symbol, tick.bid, sl, tp, comment);
+   }
    else if(action == "CLOSE")
       CloseBySymbol(symbol, (long)magic);
    else if(action == "MODIFY")
@@ -344,12 +357,31 @@ void CloseBySymbol(string symbol, long magic)
 //+------------------------------------------------------------------+
 void ModifyOpenTrades(string symbol, long magic, double sl, double tp)
 {
+   MqlTick tick;
+   if(!SymbolInfoTick(symbol, tick)) return;
+   int    digits   = (int)SymbolInfoInteger(symbol, SYMBOL_DIGITS);
+   double point    = SymbolInfoDouble(symbol, SYMBOL_POINT);
+   int    stops_lv = (int)SymbolInfoInteger(symbol, SYMBOL_TRADE_STOPS_LEVEL);
+   double min_dist = MathMax(stops_lv + 5, 20) * point;
+
    for(int i = 0; i < PositionsTotal(); i++)
    {
       if(!g_pos.SelectByIndex(i)) continue;
       if(g_pos.Symbol() != symbol) continue;
       if(magic > 0 && (long)g_pos.Magic() != magic) continue;
-      g_trade.PositionModify(g_pos.Ticket(), sl, tp);
+
+      double adj_sl = sl, adj_tp = tp;
+      if(g_pos.PositionType() == POSITION_TYPE_BUY)
+      {
+         if(adj_sl >= tick.bid - min_dist) adj_sl = NormalizeDouble(tick.bid - min_dist, digits);
+         if(adj_tp <= tick.ask + min_dist) adj_tp = NormalizeDouble(tick.ask + min_dist, digits);
+      }
+      else
+      {
+         if(adj_sl <= tick.ask + min_dist) adj_sl = NormalizeDouble(tick.ask + min_dist, digits);
+         if(adj_tp >= tick.bid - min_dist) adj_tp = NormalizeDouble(tick.bid - min_dist, digits);
+      }
+      g_trade.PositionModify(g_pos.Ticket(), adj_sl, adj_tp);
    }
 }
 
