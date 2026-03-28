@@ -15,13 +15,25 @@
 #include <Trade/PositionInfo.mqh>
 #include <Zmq/Zmq.mqh>
 
-// ── Parameters ───────────────────────────────────────────────────────────────
+// ── Live parameters (ZMQ bridge) ─────────────────────────────────────────────
 input int    PushPort      = 5557;   // EA → Python (EA binds this)
 input string PythonHost    = "127.0.0.1";
 input int    PullPort      = 5558;   // Python → EA (Python binds, EA connects)
 input int    TimerMs       = 100;
 input int    MaxHistoryBars = 300000;
 input bool   DebugMode     = false;
+
+// ── Backtest / Strategy-Tester parameters ─────────────────────────────────────
+// Used only when running inside MT5 Strategy Tester (auto-detected).
+// Signals: fast EMA crosses slow EMA.  Trailing: pip-based once in profit.
+input group             "=== Backtest Settings ==="
+input int    BT_FastMA    = 5;     // Fast EMA period
+input int    BT_SlowMA    = 20;    // Slow EMA period
+input double BT_Lot       = 0.01;  // Fixed lot size for tester
+input double BT_SL_Pips   = 25.0;  // Initial SL distance in pips
+input double BT_TP_Pips   = 60.0;  // Initial TP distance in pips
+input double BT_Trail_Act = 15.0;  // Trailing activates after N pips profit
+input double BT_Trail_Dist= 12.0;  // SL distance behind price once trailing (pips)
 
 // ── Globals ──────────────────────────────────────────────────────────────────
 Context   g_ctx;
@@ -35,11 +47,37 @@ ulong    g_magic   = 20250002;
 datetime g_lastHB  = 0;
 ulong    g_lastHistTkt = 0;
 
+// ── Tester-mode state ─────────────────────────────────────────────────────────
+bool     g_is_tester   = false;
+int      g_bt_magic    = 88880001;  // counter for tester trade magics
+double   g_bt_pip      = 0.0;       // pip size for chart symbol (set OnInit)
+
 //+------------------------------------------------------------------+
 //| OnInit                                                            |
 //+------------------------------------------------------------------+
 int OnInit()
 {
+   g_is_tester = (bool)MQLInfoInteger(MQL_TESTER);
+
+   // ── Tester mode: skip ZMQ entirely ────────────────────────────────────────
+   if(g_is_tester)
+   {
+      // Derive pip size from symbol digits (standard MT5 convention)
+      int digits = (int)SymbolInfoInteger(Symbol(), SYMBOL_DIGITS);
+      if(digits == 3 || digits == 5)      g_bt_pip = MathPow(10.0, -(digits - 1));
+      else if(digits == 2)                g_bt_pip = MathPow(10.0, -(digits - 1));
+      else                                g_bt_pip = SymbolInfoDouble(Symbol(), SYMBOL_POINT) * 10;
+
+      g_trade.SetExpertMagicNumber(g_bt_magic);
+      g_trade.SetDeviationInPoints(30);
+      g_trade.LogLevel(LOG_LEVEL_ERRORS);
+      EventSetMillisecondTimer(TimerMs);
+      Print("MT5_Bot_mk2_EA [BACKTEST MODE] symbol=", Symbol(),
+            " FastMA=", BT_FastMA, " SlowMA=", BT_SlowMA,
+            " SL=", BT_SL_Pips, "pip  TP=", BT_TP_Pips, "pip");
+      return INIT_SUCCEEDED;
+   }
+
    g_ctx.setBlocky(false);
 
    // EA PUSH socket — binds so Python can connect to it
@@ -82,8 +120,11 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   if(g_push != NULL) { delete g_push; g_push = NULL; }
-   if(g_pull != NULL) { delete g_pull; g_pull = NULL; }
+   if(!g_is_tester)
+   {
+      if(g_push != NULL) { delete g_push; g_push = NULL; }
+      if(g_pull != NULL) { delete g_pull; g_pull = NULL; }
+   }
    Print("MT5_Bot_mk2_EA stopped. reason=", reason);
 }
 
@@ -92,6 +133,8 @@ void OnDeinit(const int reason)
 //+------------------------------------------------------------------+
 void OnTimer()
 {
+   if(g_is_tester) return;   // tester runs purely on OnTick
+
    // Process all pending inbound commands
    ProcessInbound();
 
@@ -113,6 +156,12 @@ void OnTimer()
 //+------------------------------------------------------------------+
 void OnTick()
 {
+   if(g_is_tester)
+   {
+      TesterCheckSignal();
+      TesterUpdateTrailing();
+      return;
+   }
    PushTick(Symbol());
 }
 
@@ -121,6 +170,7 @@ void OnTick()
 //+------------------------------------------------------------------+
 void SendMsg(string json)
 {
+   if(g_is_tester) return;   // no ZMQ in tester mode
    if(g_push == NULL) return;
    ZmqMsg zm(json);
    g_push.send(zm, true);
@@ -269,6 +319,112 @@ void PushOpenPositions()
    }
    arr += "]";
    SendMsg("{\"type\":\"POSITIONS_SYNC\",\"positions\":" + arr + "}");
+}
+
+//+------------------------------------------------------------------+
+//| BACKTEST: EMA crossover signal → open trade                      |
+//| Runs on every OnTick() when g_is_tester = true.                  |
+//| One open position per direction allowed at a time.               |
+//+------------------------------------------------------------------+
+void TesterCheckSignal()
+{
+   // Need at least SlowMA+2 bars
+   if(Bars(Symbol(), PERIOD_CURRENT) < BT_SlowMA + 3) return;
+
+   double fast1 = iMA(Symbol(), PERIOD_CURRENT, BT_FastMA, 0, MODE_EMA, PRICE_CLOSE, 1);
+   double fast2 = iMA(Symbol(), PERIOD_CURRENT, BT_FastMA, 0, MODE_EMA, PRICE_CLOSE, 2);
+   double slow1 = iMA(Symbol(), PERIOD_CURRENT, BT_SlowMA, 0, MODE_EMA, PRICE_CLOSE, 1);
+   double slow2 = iMA(Symbol(), PERIOD_CURRENT, BT_SlowMA, 0, MODE_EMA, PRICE_CLOSE, 2);
+
+   bool crossUp   = (fast2 <= slow2) && (fast1 > slow1);   // BUY signal
+   bool crossDown = (fast2 >= slow2) && (fast1 < slow1);   // SELL signal
+
+   if(!crossUp && !crossDown) return;
+
+   // Count open positions for this symbol + magic range
+   int buys = 0, sells = 0;
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      if(!g_pos.SelectByIndex(i)) continue;
+      if(g_pos.Symbol() != Symbol()) continue;
+      if(g_pos.PositionType() == POSITION_TYPE_BUY)  buys++;
+      else                                            sells++;
+   }
+
+   MqlTick tick;
+   if(!SymbolInfoTick(Symbol(), tick)) return;
+
+   int    digits   = (int)SymbolInfoInteger(Symbol(), SYMBOL_DIGITS);
+   double point    = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   int    stops_lv = (int)SymbolInfoInteger(Symbol(), SYMBOL_TRADE_STOPS_LEVEL);
+   double min_dist = MathMax(stops_lv + 5, 20) * point;
+   double sl_dist  = MathMax(BT_SL_Pips * g_bt_pip, min_dist);
+   double tp_dist  = MathMax(BT_TP_Pips * g_bt_pip, min_dist * 2);
+
+   g_trade.SetExpertMagicNumber(g_bt_magic);
+
+   if(crossUp && buys == 0)
+   {
+      double sl = NormalizeDouble(tick.bid - sl_dist, digits);
+      double tp = NormalizeDouble(tick.ask + tp_dist, digits);
+      if(g_trade.Buy(BT_Lot, Symbol(), tick.ask, sl, tp, "bt_buy"))
+         Print("[BT] BUY  @ ", tick.ask, "  SL=", sl, "  TP=", tp);
+   }
+   else if(crossDown && sells == 0)
+   {
+      double sl = NormalizeDouble(tick.ask + sl_dist, digits);
+      double tp = NormalizeDouble(tick.bid - tp_dist, digits);
+      if(g_trade.Sell(BT_Lot, Symbol(), tick.bid, sl, tp, "bt_sell"))
+         Print("[BT] SELL @ ", tick.bid, "  SL=", sl, "  TP=", tp);
+   }
+}
+
+//+------------------------------------------------------------------+
+//| BACKTEST: pip-based trailing stop                                 |
+//| Activates once position profit >= BT_Trail_Act pips.             |
+//| Keeps SL no further than BT_Trail_Dist pips from current price.  |
+//+------------------------------------------------------------------+
+void TesterUpdateTrailing()
+{
+   MqlTick tick;
+   if(!SymbolInfoTick(Symbol(), tick)) return;
+
+   int    digits   = (int)SymbolInfoInteger(Symbol(), SYMBOL_DIGITS);
+   double point    = SymbolInfoDouble(Symbol(), SYMBOL_POINT);
+   int    stops_lv = (int)SymbolInfoInteger(Symbol(), SYMBOL_TRADE_STOPS_LEVEL);
+   double min_dist = MathMax(stops_lv + 5, 20) * point;
+   double trail    = MathMax(BT_Trail_Dist * g_bt_pip, min_dist);
+   double act      = BT_Trail_Act * g_bt_pip;
+
+   for(int i = 0; i < PositionsTotal(); i++)
+   {
+      if(!g_pos.SelectByIndex(i)) continue;
+      if(g_pos.Symbol() != Symbol()) continue;
+
+      double cur_sl = g_pos.StopLoss();
+      double cur_tp = g_pos.TakeProfit();
+      double new_sl = cur_sl;
+
+      if(g_pos.PositionType() == POSITION_TYPE_BUY)
+      {
+         double profit_dist = tick.bid - g_pos.PriceOpen();
+         if(profit_dist < act) continue;            // not enough profit yet
+         double candidate = NormalizeDouble(tick.bid - trail, digits);
+         if(candidate > cur_sl + point)             // only move up
+            new_sl = candidate;
+      }
+      else
+      {
+         double profit_dist = g_pos.PriceOpen() - tick.ask;
+         if(profit_dist < act) continue;
+         double candidate = NormalizeDouble(tick.ask + trail, digits);
+         if(candidate < cur_sl - point || cur_sl == 0)  // only move down
+            new_sl = candidate;
+      }
+
+      if(new_sl != cur_sl)
+         g_trade.PositionModify(g_pos.Ticket(), new_sl, cur_tp);
+   }
 }
 
 //+------------------------------------------------------------------+
