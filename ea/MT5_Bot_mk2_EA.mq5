@@ -51,6 +51,8 @@ ulong    g_lastHistTkt = 0;
 bool     g_is_tester   = false;
 int      g_bt_magic    = 88880001;  // counter for tester trade magics
 double   g_bt_pip      = 0.0;       // pip size for chart symbol (set OnInit)
+int      g_bt_h_fast   = INVALID_HANDLE;   // fast EMA indicator handle
+int      g_bt_h_slow   = INVALID_HANDLE;   // slow EMA indicator handle
 
 //+------------------------------------------------------------------+
 //| OnInit                                                            |
@@ -67,6 +69,14 @@ int OnInit()
       if(digits == 3 || digits == 5)      g_bt_pip = MathPow(10.0, -(digits - 1));
       else if(digits == 2)                g_bt_pip = MathPow(10.0, -(digits - 1));
       else                                g_bt_pip = SymbolInfoDouble(Symbol(), SYMBOL_POINT) * 10;
+
+      g_bt_h_fast = iMA(Symbol(), PERIOD_CURRENT, BT_FastMA, 0, MODE_EMA, PRICE_CLOSE);
+      g_bt_h_slow = iMA(Symbol(), PERIOD_CURRENT, BT_SlowMA, 0, MODE_EMA, PRICE_CLOSE);
+      if(g_bt_h_fast == INVALID_HANDLE || g_bt_h_slow == INVALID_HANDLE)
+      {
+         Print("ERROR: iMA handle creation failed");
+         return INIT_FAILED;
+      }
 
       g_trade.SetExpertMagicNumber(g_bt_magic);
       g_trade.SetDeviationInPoints(30);
@@ -120,7 +130,12 @@ int OnInit()
 void OnDeinit(const int reason)
 {
    EventKillTimer();
-   if(!g_is_tester)
+   if(g_is_tester)
+   {
+      if(g_bt_h_fast != INVALID_HANDLE) { IndicatorRelease(g_bt_h_fast); g_bt_h_fast = INVALID_HANDLE; }
+      if(g_bt_h_slow != INVALID_HANDLE) { IndicatorRelease(g_bt_h_slow); g_bt_h_slow = INVALID_HANDLE; }
+   }
+   else
    {
       if(g_push != NULL) { delete g_push; g_push = NULL; }
       if(g_pull != NULL) { delete g_pull; g_pull = NULL; }
@@ -330,11 +345,19 @@ void TesterCheckSignal()
 {
    // Need at least SlowMA+2 bars
    if(Bars(Symbol(), PERIOD_CURRENT) < BT_SlowMA + 3) return;
+   if(g_bt_h_fast == INVALID_HANDLE || g_bt_h_slow == INVALID_HANDLE) return;
 
-   double fast1 = iMA(Symbol(), PERIOD_CURRENT, BT_FastMA, 0, MODE_EMA, PRICE_CLOSE, 1);
-   double fast2 = iMA(Symbol(), PERIOD_CURRENT, BT_FastMA, 0, MODE_EMA, PRICE_CLOSE, 2);
-   double slow1 = iMA(Symbol(), PERIOD_CURRENT, BT_SlowMA, 0, MODE_EMA, PRICE_CLOSE, 1);
-   double slow2 = iMA(Symbol(), PERIOD_CURRENT, BT_SlowMA, 0, MODE_EMA, PRICE_CLOSE, 2);
+   // CopyBuffer(handle, buffer, start_pos, count, array[])
+   // start_pos=1 → skip current incomplete bar, get shifts 1 and 2
+   // buf[0]=shift1 (last closed bar), buf[1]=shift2 (bar before that)
+   double fast_buf[2], slow_buf[2];
+   if(CopyBuffer(g_bt_h_fast, 0, 1, 2, fast_buf) < 2) return;
+   if(CopyBuffer(g_bt_h_slow, 0, 1, 2, slow_buf) < 2) return;
+
+   double fast1 = fast_buf[0];   // shift 1 — last closed bar
+   double fast2 = fast_buf[1];   // shift 2 — bar before that
+   double slow1 = slow_buf[0];
+   double slow2 = slow_buf[1];
 
    bool crossUp   = (fast2 <= slow2) && (fast1 > slow1);   // BUY signal
    bool crossDown = (fast2 >= slow2) && (fast1 < slow1);   // SELL signal
